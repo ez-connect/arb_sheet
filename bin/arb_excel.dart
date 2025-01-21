@@ -5,53 +5,73 @@ import 'package:path/path.dart';
 
 import 'package:arb_excel/arb_excel.dart';
 
-const _kVersion = '0.0.1';
+const _kVersion = '1.0.0';
 
 void main(List<String> args) {
   final parse = ArgParser();
-  parse.addFlag('new',
-      abbr: 'n', defaultsTo: false, help: 'New translation sheet');
+  parse.addOption('output',
+      abbr: 'o', help: 'Name of output file to create');
   parse.addFlag('arb',
-      abbr: 'a', defaultsTo: false, help: 'Export to ARB files');
+      abbr: 'a', help: 'Convert Excel Sheet to ARB files');
   parse.addFlag('excel',
-      abbr: 'e', defaultsTo: false, help: 'Import ARB files to sheet');
-  final flags = parse.parse(args);
+      abbr: 'e', help: 'Convert ARB files to Excel Sheet. Specify director(ies) or name(s) of ARB files to convert as additional arguments.');
+  parse.addFlag('merge',
+      abbr: 'm', help: 'Merge data from Excel Sheet into ARB file. Specify name of Excel Sheet and ARB file to import.');
+  parse.addOption('leadLocale',
+      abbr: 'l', help: 'Name of the primary (aka lead) locale.');
+  parse.addOption('targetLocales',
+      abbr: 't', help: 'A comma separated list of locale names to be included in the Excel file created.');
+  parse.addFlag('includeLeadLocale',
+      abbr: 'i', help: 'Whether the ARB file for the lead locale should be extracted from the Excel as well.');
+  parse.addOption('filter',
+      abbr: 'f', help: 'Filter ARB resources to export depending on meta tag. Example: -f x-reviewed:false');
 
-  // Not enough args
-  if (args.length < 2) {
+  ArgResults flags;
+  try {
+    flags = parse.parse(args);
+    // Not enough args
+    if (args.length < 2) {
+      usage(parse);
+    }
+  } on FormatException {
     usage(parse);
-    exit(1);
   }
 
-  final filename = flags.rest.first;
+  var filename = flags.rest.first;
+  var outputFile = flags.option('output');
 
-  if (flags['new']) {
-    stdout.writeln('Create new Excel file for translation: $filename');
-    newTemplate(filename);
+  var merge = flags.flag('merge');
+  if (flags.flag('arb') || merge) {
+    var includeLeadLocale = flags.flag('includeLeadLocale');
+    var data = parseExcel(filename: filename, includeLeadLocale: includeLeadLocale);
+    writeARB(filename, [outputFile ?? withoutExtension(filename)], data, includeLeadLocale: includeLeadLocale, merge: merge);
     exit(0);
   }
 
-  if (flags['arb']) {
-    stdout.writeln('Generate ARB from: $filename');
-    final data = parseExcel(filename: filename);
-    writeARB('${withoutExtension(filename)}.arb', data);
-    exit(0);
-  }
-
-  if (flags['excel']) {
-    stdout.writeln('Generate Excel from: $filename');
-    final data = parseARB(filename);
-    writeExcel('${withoutExtension(filename)}.xlsx', data);
+  if (flags.flag('excel')) {
+    if (outputFile == null) {
+      usage(parse);
+    }
+    var targetLocales = flags.option('targetLocales');
+    var targetLocaleList = targetLocales?.split(",");
+    var leadLocale = flags.option('leadLocale');
+    var filter = flags['filter'];
+    var inputFiles = flags.rest;
+    var data = parseARB(inputFiles, targetLocales: targetLocaleList, leadLocale: leadLocale, filter: filter is! String ? null : ARBFilter.parse(filter));
+    stdout.writeln('Generating Excel file named $outputFile from: ${data.$2.join(', ')}');
+    leadLocale ??= data.$1.languages.firstOrNull ?? 'en';
+    writeExcel(outputFile, data.$1, leadLocale);
     exit(0);
   }
 }
 
-void usage(ArgParser parse) {
+Never usage(ArgParser parse) {
   stdout.writeln('arb_sheet v$_kVersion\n');
   stdout.writeln('USAGE:');
   stdout.writeln(
-    '  arb_sheet [OPTIONS] path/to/file/name\n',
+    '  arb_sheet [OPTIONS] path_or_filename[s]\n',
   );
   stdout.writeln('OPTIONS');
   stdout.writeln(parse.usage);
+  exit(1);
 }

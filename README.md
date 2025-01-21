@@ -13,28 +13,41 @@ pub global activate arb_excel
 ```bash
 pub global run arb_excel
 
-arb_sheet [OPTIONS] path/to/file/name
+USAGE:
+  arb_sheet [OPTIONS] path_or_filename[s]
 
 OPTIONS
--n, --new      New translation sheet
--a, --arb      Export to ARB files
--e, --excel    Import ARB files to sheet
+-o, --output                    Name of output file to create
+-a, --[no-]arb                  Convert Excel Sheet to ARB files
+-e, --[no-]excel                Convert ARB files to Excel Sheet. Specify director(ies) or name(s) of ARB files to convert as additional arguments.
+-m, --[no-]merge                Merge data from Excel Sheet into ARB file. Specify name of Excel Sheet and ARB file to import.
+-l, --leadLocale                Name of the primary (aka lead) locale.
+-t, --targetLocales             A comma separated list of locale names to be included in the Excel file created.
+-i, --[no-]includeLeadLocale    Whether the ARB file for the lead locale should be extracted from the Excel as well.
+-f, --filter                    Filter ARB resources to export depending on meta tag. Example: -f x-reviewed:false
 ```
 
-Creates a XLSX template file.
+Examples:
+
+Generates ARB files from an XLSX file.
+
+Creates an Excel file (`-e`) named `example/example.xlsx` (`-o ...`) from ARB files from directory `example`,
+lead locale is `en` (`-l en`).
 
 ```bash
-pub global run arb_excel -n app.xlsx
+dart pub global run arb_excel -l en -e -o example/example.xlsx example
 ```
 
-Generates ARB files from a XLSX file.
+Merge (`-m`) the contents of file `exmample/example.xlsx` back into the ARB files located in directory `example`.
+Lead locale is `en` (`-l en`). Also extract the entries from the lead locale (`-i`).
 
 ```bash
-pub global run arb_excel -a app.xlsx
+dart pub global run arb_excel -l en -i -m example/example.xlsx
 ```
 
-Creates a XLSX file from ARB files.
+Create an ARB file (`-a`) named `test_vi.arb` (`-o test.arb`) from the contents of file `exmample/example.xlsx`.
 
 ```bash
-pub global run arb_excel -e app_en.arb
+dart pub global run arb_excel -a example/example.xlsx -o test.arb
 ```
+

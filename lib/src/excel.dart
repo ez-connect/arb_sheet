@@ -1,25 +1,16 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:arb_excel/src/assets.dart';
 import 'package:excel/excel.dart';
 
-import 'arb.dart';
+import 'package:arb_excel/src/arb.dart';
 
 const _kRowHeader = 0;
 const _kRowValue = 1;
-const _kColCategory = 0;
+const _kColContext = 0;
 const _kColText = 1;
 const _kColDescription = 2;
 const _kColValue = 3;
-
-/// Create a new Excel template file.
-///
-/// Embedded data will be packed via `template.dart`.
-void newTemplate(String filename) {
-  final buf = base64Decode(kTemplate);
-  File(filename).writeAsBytesSync(buf);
-}
+const _kColTargetLangValue = 4;
 
 /// Reads Excel sheet.
 ///
@@ -27,44 +18,130 @@ void newTemplate(String filename) {
 /// from the template.
 Translation parseExcel({
   required String filename,
-  String sheetname = 'Text',
-  int headerRow = _kRowHeader,
+  bool includeLeadLocale = false,
   int valueRow = _kRowValue,
 }) {
   final buf = File(filename).readAsBytesSync();
   final excel = Excel.decodeBytes(buf);
-  final sheet = excel.sheets[sheetname];
-  if (sheet == null) {
-    return Translation();
-  }
+  final languages = <String>[];
+  final items = <String,ARBItem>{};
+  bool firstLocale = true;
+  for (final sheet in excel.sheets.values) {
+    var idx = sheet.sheetName.lastIndexOf(" - ");
+    if (idx < 0) {
+      // Support for original format.
+      if (sheet.sheetName != 'Text') {
+        continue;
+      }
+    }
+    var rowHeader = sheet.rows[_kRowHeader];
+    var locale = rowHeader[_kColTargetLangValue]?.value?.toString() ?? 'vi';
+    var leadLocale = rowHeader[_kColValue]?.value?.toString() ?? 'en';
+    if (firstLocale && includeLeadLocale) {
+      languages.add(leadLocale);
+      for (int i = valueRow; i < sheet.rows.length; i++) {
+        final row = sheet.rows[i];
+        var text = row[_kColText]?.value?.toString() ?? '';
 
-  final List<ARBItem> items = [];
-  final columns = sheet.rows[headerRow];
-  for (int i = valueRow; i < sheet.rows.length; i++) {
-    final row = sheet.rows[i];
-    final item = ARBItem(
-      category: row[_kColCategory]?.value?.toString(),
-      text: row[_kColText]?.value?.toString() ?? '',
-      description: row[_kColDescription]?.value?.toString(),
-      translations: {},
-    );
+        final item = items.putIfAbsent(text, () => ARBItem(
+          messageKey: text,
+          context: row[_kColContext]?.value?.toString(),
+          description: row[_kColDescription]?.value?.toString(),
+          translations: {},
+        ));
+        item.translations[leadLocale] = row[_kColValue]?.value?.toString() ?? '';
+      }
+      firstLocale = false;
+    }
+    languages.add(locale);
+    for (int i = valueRow; i < sheet.rows.length; i++) {
+      final row = sheet.rows[i];
+      var text = row[_kColText]?.value?.toString() ?? '';
 
-    for (int i = _kColValue; i < sheet.maxCols; i++) {
-      final lang = columns[i]?.value?.toString() ?? i.toString();
-      item.translations[lang] = row[i]?.value?.toString() ?? '';
+      final item = items.putIfAbsent(text, () => ARBItem(
+        messageKey: text,
+        translations: {},
+      ));
+      item.translations[locale] = row[_kColTargetLangValue]?.value?.toString() ?? '';
     }
 
-    items.add(item);
   }
-
-  final languages = columns
-      .where((e) => e != null && e.colIndex >= _kColValue)
-      .map<String>((e) => e?.value?.toString() ?? '')
-      .toList();
-  return Translation(languages: languages, items: items);
+  return Translation(languages: languages, items: items.values.toList());
 }
 
+String? _quote(String? text) => text?.replaceAll('\n', r'\n');
+
 /// Writes a Excel file, includes all translations.
-void writeExcel(String filename, Translation data) {
-  throw UnimplementedError();
+void writeExcel(String filename, Translation data, String leadLocale) {
+  var excel = Excel.createExcel();
+  var sheets = excel.sheets;
+  var defaultSheet = sheets.isNotEmpty ? sheets.keys.first : null;
+  for (final targetLocale in data.languages) {
+    if (targetLocale == leadLocale) {
+      continue;
+    }
+    var name = '$leadLocale - $targetLocale';
+    var sheetObject = excel[name];
+    if (defaultSheet != null) {
+      excel.delete(defaultSheet);
+      defaultSheet = null;
+    }
+    var bgColorDoNotEdit = ExcelColor.fromHexString("#D6DCE4");
+    var bgColorHeader = ExcelColor.fromHexString("#4472C4");
+    sheetObject.setColumnWidth(_kColValue, 60);
+    sheetObject.setColumnWidth(_kColTargetLangValue, 60);
+    sheetObject.setColumnWidth(_kColDescription, 90);
+    sheetObject.appendRow([
+      TextCellValue('Context'),
+      TextCellValue('Key'),
+      TextCellValue('Description'),
+      TextCellValue(leadLocale),
+      TextCellValue(targetLocale),
+    ]);
+    var boldStyle = CellStyle(backgroundColorHex: bgColorHeader, bold: true,
+        fontColorHex: ExcelColor.white,
+        bottomBorder: Border(borderColorHex: ExcelColor.black, borderStyle: BorderStyle.Thick));
+    var cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColText, rowIndex: _kRowHeader));
+    cell.cellStyle = boldStyle;
+    cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColValue, rowIndex: _kRowHeader));
+    cell.cellStyle = boldStyle;
+    cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColTargetLangValue, rowIndex: _kRowHeader));
+    cell.cellStyle = boldStyle;
+    cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColDescription, rowIndex: _kRowHeader));
+    cell.cellStyle = boldStyle;
+    cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColContext, rowIndex: _kRowHeader));
+    cell.cellStyle = boldStyle;
+    var disabledStyle = CellStyle(backgroundColorHex: bgColorDoNotEdit);
+    int rowIdx = _kRowValue;
+    for (final item in data.items) {
+      var t = item.translations[targetLocale];
+      if (t == null) {
+        continue;
+      }
+      var row = <CellValue?>[];
+      row.length = 5;
+      row[_kColContext] = TextCellValue(item.context ?? '');
+      row[_kColText] = TextCellValue(item.messageKey);
+      row[_kColValue] = TextCellValue(_quote(item.translations[leadLocale]) ?? '?');
+      row[_kColTargetLangValue] = TextCellValue(_quote(t) ?? '');
+      row[_kColDescription] = TextCellValue(item.description ?? '');
+      sheetObject.appendRow(row);
+      var cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColText, rowIndex: rowIdx));
+      cell.cellStyle = disabledStyle;
+      cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColValue, rowIndex: rowIdx));
+      cell.cellStyle = disabledStyle;
+      cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColDescription, rowIndex: rowIdx));
+      cell.cellStyle = disabledStyle;
+      cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: _kColContext, rowIndex: rowIdx));
+      cell.cellStyle = disabledStyle;
+      rowIdx++;
+    }
+    sheetObject.setColumnAutoFit(_kColText);
+    sheetObject.setColumnAutoFit(_kColContext);
+  }
+  var bytes = excel.save(fileName: filename);
+  if (bytes == null) {
+    throw Exception("Error generating excel. Cannot encode");
+  }
+  File(filename).writeAsBytesSync(bytes);
 }
